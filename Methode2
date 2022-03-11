@@ -1,0 +1,126 @@
+#MLA TP3
+using JuMP
+using CPLEX
+
+function readGraph(nom)
+    if (!isfile("C:/Users/ahmed/Desktop/MLA/" * nom))
+        println("Je ne trouve pas le fichier")
+        return
+    end
+    myFile=open("C:/Users/ahmed/Desktop/MLA/" * nom)
+    data=readlines(myFile)
+    global n=parse(Int,data[1])
+    global m=parse(Int,data[2])
+    global adj=zeros(n,n)       #matrice d'adjacene
+    global demande=zeros(n)     #demande
+    for i in 3:3+m-1
+        line=split(data[i]," ")
+        u=parse(Int,line[1])
+        #println("u : ",u+1)
+        v=parse(Int,line[2])
+        #println("v : ", v+1)
+        adj[u+1,v+1]=1
+        adj[v+1,u+1]=1
+    end
+    for i in 3+m:3+m+n-1
+        line=split(data[i]," ")
+        u=parse(Int,line[1])
+        #println("u : ",u+1)
+        d=parse(Int,line[2])
+        #println("d: ",d)
+        demande[u+1]=d
+    end
+    println(n)
+end
+#readGraph("benders1.txt")
+#print(n,m,adj,demande)
+
+function MLAFUN2(instance, b)
+
+k=0
+readGraph(instance)
+#***************Probleme maitre****************************
+m = Model(CPLEX.Optimizer)
+
+@variable(m, y[i in 1:n , j in 1:n ] >=0 )
+
+#Définition de l'objectif
+@objective(m, Min, sum(y[i,j] for i in 1:n ,j in 1:n if adj[i,j]==1))
+
+optimize!(m)
+y_cour=value.(y)
+#println(y_val)
+
+# ****************sous probleme F*****************A
+
+m1= Model(CPLEX.Optimizer)
+@variable(m1, v[i in 1:n] >=0 )
+@variable(m1, z[i in 1:n ,j in 1:n] >= 0)
+@constraint(m1,v[1]==0)
+for i in 1:n , j in 1:n 
+    if adj[i,j]==1 && i<j
+        @constraint(m1, -z[i,j] - v[i] + v[j] <= 0 )
+        @constraint(m1, -z[i,j] + v[i] - v[j] <= 0 )
+    end
+end
+
+@constraint(m1,sum( v[i] for i in 1:n)+sum(z[i,j] for i in 1:n , j in 1:n if adj[i,j]==1 )==1)
+
+@objective(m1, Max, (sum( demande[i]* v[i] for i in 1:n)-sum(b*y_cour[i,j]*z[i,j] for i in 1:n , j in 1:n if adj[i,j]==1 )))
+
+optimize!(m1)
+z1=objective_value(m1)
+v_cour=value.(v)
+z_cour=value.(z)
+while (z1 > 1e-4)
+    #on ajoute la nouvelle contrainte
+    @constraint(m,(sum( demande[i]* v_cour[i] for i in 1:n)-sum(b*y[i,j]*z_cour[i,j] for i in 1:n , j in 1:n if adj[i,j]==1))<=0 )
+    
+    optimize!(m)
+
+    
+    y_cour=value.(y)
+    #on met a jour l'obj de M1
+    @objective(m1, Max, (sum( demande[i]* v[i] for i in 1:n)-sum(b*y_cour[i,j]*z[i,j] for i in 1:n , j in 1:n if adj[i,j]==1 )))
+    optimize!(m1)
+    v_cour=value.(v)
+    z_cour=value.(z)
+    z1=objective_value(m1)
+end
+set_integer.(y)
+optimize!(m)
+
+y_cour=value.(y)
+
+@objective(m1, Max, (sum( demande[i]* v[i] for i in 1:n)-sum(b*y_cour[i,j]*z[i,j] for i in 1:n , j in 1:n if adj[i,j]==1 )))
+
+optimize!(m1)
+z1=objective_value(m1)
+v_cour=value.(v)
+z_cour=value.(z)
+while (z1 > 1e-4)
+    k+=1
+    #on ajoute la nouvelle contrainte
+    @constraint(m,(sum( demande[i]* v_cour[i] for i in 1:n)-sum(b*y[i,j]*z_cour[i,j] for i in 1:n , j in 1:n if adj[i,j]==1))<=0 )
+    
+    optimize!(m)
+
+    
+    y_cour=value.(y)
+    #on met a jour l'obj de M1
+    @objective(m1, Max, (sum( demande[i]* v[i] for i in 1:n)-sum(b*y_cour[i,j]*z[i,j] for i in 1:n , j in 1:n if adj[i,j]==1 )))
+    optimize!(m1)
+    v_cour=value.(v)
+    z_cour=value.(z)
+    z1=objective_value(m1)
+end
+return ([objective_value(m),k])
+end
+instance=["benders-graphe-hexagone.txt","benders1.txt","benders2.txt","benders3.txt"]
+Tabb_1=[]
+Tabb_3=[]
+for ins in instance
+    append!(Tabb_1,[MLAFUN2(ins,1)])
+    append!(Tabb_3,[MLAFUN2(ins,3)])
+end
+println(Tabb_1,Tabb_3)
